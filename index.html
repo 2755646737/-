@@ -187,9 +187,6 @@
                 <div class="form-text text-info mt-2" v-if="isKnownLeague">
                     **当前：赛事已识别**，请从下方下拉框选择球队。
                 </div>
-                <div class="form-text text-warning mt-2" v-else>
-                    **当前：赛事未识别或未输入**，请手动输入下方球队名称。
-                </div>
             </div>
 
             <div class="col-6">
@@ -281,9 +278,6 @@
                 <span class="input-group-text bg-white"><i class="bi bi-search text-primary"></i></span>
                 <input type="text" class="form-control" v-model="searchQuery" 
                        placeholder="精准搜索：输入赔率 或 变化序列 (≥3位开始搜索)">
-            </div>
-            <div class="form-text text-muted ms-1" style="font-size: 12px;">
-                当前输入长度: {{ searchQuery.length }}。序列搜索在 3 位后激活。
             </div>
         </div>
 
@@ -1173,4 +1167,5 @@ const downloadFromCloud = () => {
 </script>
 
 </body>
+
 </html>
