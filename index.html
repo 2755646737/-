@@ -155,8 +155,8 @@
 </div>
 
 <script>
-    const { createApp, ref, computed, reactive, onMounted, watch } = Vue;
-
+    const { createApp, ref, computed, reactive, onMounted, watch, nextTick } = Vue;
+    
     // --- 1. 获取外部数据 (从 window 对象读取) ---
     // 如果您没有创建 soccerData.js 文件，这里会是 undefined，导致搜索失效。
     const leagueData = window.leagueData || {}; 
@@ -401,7 +401,15 @@ const formatOdds = (field) => {
                 });
             };
 
-            onMounted(loadFromLocal);
+           // --- 替换位置：原 onMounted(loadFromLocal); 这一行 ---
+onMounted(() => {
+    // 1. 正常加载本地数据
+    loadFromLocal();
+    nextTick(() => {
+        // 如果问题依然存在，可以在这里尝试再次触发一个小的响应式更新，
+        // 但通常 nextTick 自身就足够了。
+    });
+});
 
             const filteredData = computed(() => {
                 const q = searchQuery.value.trim();
@@ -423,4 +431,5 @@ const formatOdds = (field) => {
     }).mount('#app');
 </script>
 </body>
+
 </html>
