@@ -560,7 +560,7 @@ const getInitial = (text) => {
             const filteredData = computed(() => {
                 const q = searchQuery.value.trim();
                 if (!q) return localData.value;
-                return localData.value.filter(i => i.upperOdds === q || (q.length >=3 && i.oddsChange.includes(q)));
+                return localData.value.filter(i => i.upperOdds === q || (q.length >=2 && i.oddsChange.includes(q)));
             });
 
             return {
@@ -577,4 +577,5 @@ const getInitial = (text) => {
     }).mount('#app');
 </script>
 </body>
+
 </html>
