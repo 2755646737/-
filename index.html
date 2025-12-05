@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>足球数据管理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <!--<script src="https://cdnjs.cloudflare.com/ajax/libs/pinyin-pro/3.12.0/index.min.js"></script>-->
+    <!--<script src="pinyin.js"></script>-->
+    <script src="soccerData.js"></script>
+    <script src="idb.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192x192.png">
+    <meta name="apple-mobile-web-app-status-bar-style" content="#4299e1">
+    <meta name="apple-mobile-web-app-title" content="赛事查询">
+
+    <style>
+        body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .page-container { max-width: 850px; margin: 0 auto; padding: 15px; background: white; min-height: 100vh; box-shadow: 0 0 10px rgba(0,0,0,0.05); }
+        .nav-tabs .nav-link { color: #495057; cursor: pointer; font-weight: 600; border-radius: 8px 8px 0 0; padding: 10px 15px; }
+        .nav-tabs .nav-link.active { background-color: #0d6efd; color: white; border-color: #0d6efd; }
+        .form-label { font-weight: bold; font-size: 0.9rem; margin-bottom: 0.3rem; color: #333; }
+        .form-control, .form-select { border-radius: 6px; }
+        .autocomplete-list {
+            position: absolute; width: 100%; z-index: 1050; max-height: 200px; overflow-y: auto;
+            border: 1px solid #ccc; border-radius: 0 0 6px 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background: white;
+        }
+        .autocomplete-item { cursor: pointer; padding: 0.5rem 1rem; border-bottom: 1px solid #eee; }
+        .autocomplete-item:hover { background-color: #f8f9fa; }
+        .btn-custom { margin-bottom: 10px; width: 100%; font-weight: 500; border-radius: 6px; }
+        .table-responsive { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow-y: auto; max-height: 60vh; }
+        .table thead th { background-color: #343a40; color: white; position: sticky; top: 0; z-index: 10; }
+        .table td, .table th { vertical-align: middle; white-space: nowrap; font-size: 0.85rem; padding: 0.75rem 0.5rem; }
+        .search-bar { margin-bottom: 15px; padding: 10px 0; border-bottom: 1px solid #eee; background: white; position: sticky; top: 0; z-index: 10; }
+        .delete-btn { color: #dc3545; cursor: pointer; font-weight: bold; text-decoration: underline; font-size: 1rem; }
+    </style>
+</head>
+<body>
+
+<div id="app" class="page-container">
+    <ul class="nav nav-tabs nav-fill mb-4">
+        <li class="nav-item"><a class="nav-link" :class="{ active: currentPage === 1 }" @click="currentPage = 1"><i class="bi bi-pencil-square me-1"></i> 数据录入</a></li>
+        <li class="nav-item"><a class="nav-link" :class="{ active: currentPage === 2 }" @click="currentPage = 2"><i class="bi bi-table me-1"></i> 本地数据 ({{ filteredData.length }})</a></li>
+    </ul>
+
+    <div v-show="currentPage === 1">
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label">比赛日期 <span class="text-danger">*</span></label>
+                <input type="date" class="form-control" v-model="form.date" required>
+            </div>
+
+            <div class="col-12 position-relative">
+                <label class="form-label">联赛/赛事 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" :value="form.league" @input="updateModel('league', $event)" @focus="showLeagueResults = true" @blur="hideResultsSafely('league')" placeholder="输入首字母(如 yc) 或 汉字" required>
+                <ul v-if="showLeagueResults && filteredLeagues.length > 0 && form.league.length > 0" class="list-group autocomplete-list">
+                    <li v-for="league in filteredLeagues" :key="league" class="list-group-item list-group-item-action" @mousedown.prevent="selectItem('league', league)">{{ league }}</li>
+                </ul>
+            </div>
+
+            <div class="col-6 position-relative">
+                <label class="form-label text-primary">主队 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" :value="form.homeTeam" @input="updateModel('homeTeam', $event)" @focus="showHomeTeamResults = true" @blur="hideResultsSafely('home')" placeholder="输入首字母/汉字" required>
+                <ul v-if="showHomeTeamResults && filteredHomeTeams.length > 0 && form.homeTeam.length > 0" class="list-group autocomplete-list">
+                    <li v-for="team in filteredHomeTeams" :key="team" class="list-group-item list-group-item-action" @mousedown.prevent="selectItem('home', team)">{{ team }}</li>
+                </ul>
+            </div>
+
+            <div class="col-6 position-relative">
+                <label class="form-label text-danger">客队 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" :value="form.awayTeam" @input="updateModel('awayTeam', $event)" @focus="showAwayTeamResults = true" @blur="hideResultsSafely('away')" placeholder="输入首字母/汉字" required>
+                <ul v-if="showAwayTeamResults && filteredAwayTeams.length > 0 && form.awayTeam.length > 0" class="list-group autocomplete-list">
+                    <li v-for="team in filteredAwayTeams" :key="team" class="list-group-item list-group-item-action" @mousedown.prevent="selectItem('away', team)">{{ team }}</li>
+                </ul>
+            </div>
+
+            <div class="col-6">
+                <label class="form-label">半场比分 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" v-model="form.halfScore" @blur="formatScore('halfScore')" placeholder="如: 10" required>
+            </div>
+
+            <div class="col-6">
+                <label class="form-label">全场比分 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" v-model="form.fullScore" @blur="formatScore('fullScore')" placeholder="如: 21" required>
+            </div>
+
+            <div class="col-4">
+                <label class="form-label">让球 <span class="text-danger">*</span></label>
+                <select class="form-select" v-model="form.handicap" required>
+                    <option value="+1">+1</option>
+                    <option value="-1">-1</option>
+                </select>
+            </div>
+
+            <div class="col-4">
+                <label class="form-label">上盘赔率 <span class="text-danger">*</span></label> 
+                <input type="text" class="form-control" v-model="form.upperOdds" @input="handleNumberInput($event, 'upperOdds', true)" @blur="formatOdds('upperOdds')"  placeholder="如: 111 自动变 1.11" required>
+            </div>
+
+            <div class="col-4">
+                <label class="form-label">赔率变化 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" v-model="form.oddsChange" @input="handleNumberInput($event, 'oddsChange', false)" placeholder="如: 1120,开盘15分钟以内降3,升4" required>
+            </div>
+        </div>
+
+        <hr class="my-4">
+        <div class="row">
+            <div class="col-6"><button class="btn btn-primary btn-custom" @click="addData"><i class="bi bi-plus-lg me-1"></i> 添加</button></div>
+            <div class="col-6"><button class="btn btn-secondary btn-custom" @click="clearLocalData"><i class="bi bi-trash3 me-1"></i> 清空</button></div>
+            <div class="col-6"><button class="btn btn-success btn-custom" @click="exportCSV"><i class="bi bi-file-earmark-spreadsheet me-1"></i> 导出 CSV</button></div>
+            <div class="col-6"><button class="btn btn-info text-white btn-custom" @click="uploadToCloud"><i class="bi bi-cloud-upload me-1"></i> 上传云端</button></div>
+            <div class="col-12"><button class="btn btn-warning text-dark btn-custom" @click="downloadFromCloud"><i class="bi bi-cloud-download me-1"></i> 云端下发</button></div>
+        </div>
+    </div>
+
+    <div v-show="currentPage === 2">
+        <div class="search-bar">
+            <div class="input-group">
+                <span class="input-group-text bg-white"><i class="bi bi-search text-primary"></i></span>
+                <input type="text" class="form-control" v-model="searchQuery" placeholder="搜索赔率 或 变化序列...">
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-striped table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>日期</th><th>赛事</th><th>主队</th><th>客队</th><th>半场</th><th>全场</th><th>让球</th><th>赔率</th><th>变化</th><th class="text-center">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-if="filteredData.length === 0"><td colspan="10" class="text-center py-5 text-muted">暂无数据</td></tr>
+                    <tr v-for="(item, index) in filteredData" :key="index">
+                        <td>{{ item.date.slice(5) }}</td>
+                        <td>{{ item.league }}</td>
+                        <td>{{ item.homeTeam }}</td>
+                        <td>{{ item.awayTeam }}</td>
+                        <td>{{ item.halfScore }}</td>
+                        <td>{{ item.fullScore }}</td>
+                        <td>{{ item.handicap }}</td>
+                        <td><strong>{{ item.upperOdds }}</strong></td>
+                        <td>{{ item.oddsChange }}</td>
+                        <td class="text-center"><span class="delete-btn" @click="deleteItem(item)"><i class="bi bi-x-circle-fill"></i> 删除</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, computed, reactive, onMounted, watch, nextTick } = Vue;
+
+    // --- 1. 获取外部数据 (从 window 对象读取) ---
+    const leagueData = window.leagueData || {}; 
+
+    // --- 1. 统一的拼音首字映射源 (PINYIN_MAP_SOURCE) ---
+// 包含了您提供的所有联赛首字和球队首字，并去重合并。
+const PINYIN_MAP_SOURCE = {
+    // A: 阿, 澳, 奥, 埃, 艾, 安, 昂, 阿联酋联赛
+    'a': ["阿", "澳", "奥", "埃", "艾", "安", "昂"],
+    // B: 巴, 比, 波, 布, 贝, 拜, 班, 彼, 伯, 毕, 百, 保, 白, 本, 邦, 宾, 博, 勃, 比甲
+    'b': ["巴", "比", "波", "布", "贝", "拜", "班", "彼", "伯", "毕", "百", "保", "白", "本", "邦", "宾", "博", "勃"],
+    // C: 赤, 川, 查, 橙, 朝, 楚, 春, 城, 采, 茶, 长, 沧, 柴
+    'c': ["赤", "川", "查", "橙", "朝", "楚", "春", "城", "采", "茶", "长", "沧", "柴"],
+    // D: 德, 丹, 多, 顿, 杜, 迪, 蒂, 都, 达, 代, 登, 东, 点, 大, 道, 德国杯, 德甲
+    'd': ["德", "丹", "多", "顿", "杜", "迪", "蒂", "都", "达", "代", "登", "东", "点", "大", "道"],
+    // E: 厄, 恩, 俄, 娥, 峨, 饿, 谔, 尔, 俄超
+    'e': ["厄", "恩", "俄", "娥", "峨", "饿", "谔", "尔"],
+    // F: 法, 芬, 弗, 福, 菲, 费, 佛, 富, 凡, 范, 枫, 非洲杯, 法国杯, 法甲
+    'f': ["法", "芬", "弗", "福", "菲", "费", "佛", "富", "凡", "范", "枫", "非"],
+    // G: 哥, 冈, 格, 广, 国, 戈, 瓜, 根, 甘, 高, 古, 关, 光, 桂, 归, 国际友谊赛, 哥伦甲
+    'g': ["哥", "冈", "格", "广", "国", "戈", "瓜", "根", "甘", "高", "古", "关", "光", "桂", "归"],
+    // H: 荷, 韩, 皇, 河, 海, 横, 赫, 汉, 霍, 哈, 惠, 华, 合, 和, 恒, 洪, 杭, 衡, 韩K联赛, 荷甲
+    'h': ["荷", "韩", "皇", "河", "海", "横", "赫", "汉", "霍", "哈", "惠", "华", "合", "和", "恒", "洪", "杭", "衡"],
+    // J: 加, 几, 津, 基, 吉, 捷, 京, 江, 建, 金, 锦, 济, 冀, 晋, 俱乐部友谊赛, 解放者杯
+    'j': ["加", "几", "津", "基", "吉", "捷", "京", "江", "建", "金", "锦", "济", "冀", "晋", "俱", "解","甲"],
+    // K: 克, 喀, 卡, 科, 凯, 开, 康, 可, 空, 坎, 库, 奎, 卡塔尔联赛
+    'k': ["克", "喀", "卡", "科", "凯", "开", "康", "可", "空", "坎", "库", "奎"],
+    // L: 罗, 利, 勒, 莱, 拉, 鹿, 联, 蓝, 老, 里, 雷, 桑, 乐, 冷, 朗, 劳, 洛, 鲁, 绿, 狼, 辽
+    'l': ["罗", "利", "勒", "莱", "拉", "鹿", "联", "蓝", "老", "里", "雷", "桑", "乐", "冷", "朗", "劳", "洛", "鲁", "绿", "狼", "辽"],
+    // M: 美, 墨, 摩, 马, 曼, 米, 麦, 蒙, 麻, 玛, 迈, 密, 明, 门, 名, 美洲杯, 墨超
+    'm': ["美", "墨", "摩", "马", "曼", "米", "麦", "蒙", "麻", "玛", "迈", "密", "明", "门", "名"],
+    // N: 尼, 纽, 纳, 内, 南, 宁, 诺, 能, 奈, 南美杯, 挪超
+    'n': ["尼", "纽", "纳", "内", "南", "宁", "诺", "能", "奈"],
+    // O: 欧, 欧洲杯
+    'o': ["欧"],
+    // P: 葡, 帕, 博, 浦, 佩, 珀, 普, 匹, 平, 彭, 坡, 旁, 蓬, 磐, 葡超
+    'p': ["葡", "帕", "博", "浦", "佩", "珀", "普", "匹", "平", "彭", "坡", "旁", "蓬", "磐"],
+    // Q: 切, 全, 奇, 青, 秋, 泉, 秦, 庆, 千, 琼, 黔, 麒麟杯
+    'q': ["切", "全", "奇", "青", "秋", "泉", "秦", "庆", "千", "琼", "黔", "麒"],
+    // R: 日, 瑞, 仁, 热, 人, 任, 容, 柔, 日J联赛, 瑞典超
+    'r': ["日", "瑞", "仁", "热", "人", "任", "容", "柔"],
+    // S: 塞, 沙, 萨, 圣, 首, 森, 斯, 社, 悉, 桑, 苏, 松, 申, 深, 顺, 水, 沈, 蜀, 世界杯, 沙特国王杯
+    's': ["塞", "沙", "萨", "圣", "首", "森", "斯", "社", "悉", "桑", "苏", "松", "申", "深", "顺", "水", "沈", "蜀", "世"],
+    // T: 突, 塔, 泰, 图, 坦, 特, 天, 通, 提, 托, 土, 唐, 太, 土超, 泰超, 特立尼达
+    't': ["突", "塔", "泰", "图", "坦", "特", "天", "通", "提", "托", "土", "唐", "太"],
+    // W: 乌, 威, 维, 沃, 蔚, 瓦, 温, 万, 王, 文, 武, 皖, 乌拉圭甲
+    'w': ["乌", "威", "维", "沃", "蔚", "瓦", "温", "万", "王", "文", "武", "皖"],
+    // X: 西, 匈, 谢, 希, 厦, 湘, 新, 星, 兴, 忻, 徐, 西班牙国王杯, 西甲, 希腊超
+    'x': ["西", "匈", "谢", "希", "厦", "湘", "新", "星", "兴", "忻", "徐","仙", "熊","悉"],
+    // Y: 英, 意, 尤, 亚, 伊, 雅, 越, 印, 牙, 扬, 洋, 延, 燕, 渝, 豫, 英足总杯, 意甲, 亚冠, 越南甲, 印度超, 牙买加甲
+    'y': ["英", "意", "尤", "亚", "伊", "雅", "越", "印", "牙", "扬", "洋", "延", "燕", "渝", "豫"],
+    // Z: 中, 赞, 泽, 智, 浙, 郑, 张, 章, 赵, 周, 淄, 圳, 粤, 中超, 智利甲
+    'z': ["中", "赞", "泽", "智", "浙", "郑", "张", "章", "赵", "周", "淄", "圳", "粤"]
+};
+
+
+// --- 2. 构造汉字到首字母的查找表 (INITIAL_CHAR_MAP) ---
+// **这是关键的反向查找步骤，将汉字映射到其首字母**
+const INITIAL_CHAR_MAP = {}; 
+
+Object.keys(PINYIN_MAP_SOURCE).forEach(initial => {
+    const charList = PINYIN_MAP_SOURCE[initial];
+    
+    // 遍历汉字列表，创建：{'汉字': '字母'}
+    charList.forEach(char => {
+        INITIAL_CHAR_MAP[char] = initial; 
+    });
+});
+
+
+// --- 3. 查找函数 (getInitial) ---
+/**
+ * 只获取第一个有效汉字的拼音首字母。
+ * @param {string} text 
+ * @returns {string} 首字母（小写），如果找不到则为空字符串。
+ */
+const getInitial = (text) => {
+    if (!text) return '';
+    const cleanedText = text.trim(); 
+    
+    for (let i = 0; i < cleanedText.length; i++) {
+        const char = cleanedText[i];
+        const lowerChar = char.toLowerCase();
+        
+        // 优先查找我们构造出的反向查找表 (INITIAL_CHAR_MAP)
+        if (INITIAL_CHAR_MAP[char]) {
+            return INITIAL_CHAR_MAP[char]; // 返回找到的首字母
+        }
+        
+        // 如果是英文或数字，也返回作为首字母（例如：A队 -> a）
+        if (lowerChar >= 'a' && lowerChar <= 'z') {
+            return lowerChar;
+        }
+        // 忽略非汉字和非字母的字符，继续查找下一个
+    }
+    
+    return '';
+};
+/*
+   // --- 2. 拼音映射表 (您的增强版原始数据) ---
+// --- 2. 拼音首字映射表 (只包含联赛/球队的首个汉字) ---
+const PINYIN_MAP_INITIAL = {
+    // 国际/洲际赛事首字
+    '世': 's', // 世界杯, 世预赛
+    '欧': 'o', // 欧洲杯, 欧冠, 欧罗巴
+    '美': 'm', // 美洲杯, 美冠杯, 美职联
+    '非': 'f', // 非洲杯
+    '麒': 'q', // 麒麟杯
+    '国': 'g', // 国际友谊赛
+    '俱': 'j', // 俱乐部友谊赛
+    '解': 'j', // 解放者杯
+    '南': 'n', // 南美杯, 南非超
+    '亚': 'y', // 亚冠, 亚足联杯
+    
+    // 国内杯赛首字
+    '英': 'y', // 英足总杯, 英联赛杯, 英锦赛
+    '西': 'x', // 西班牙国王杯
+    '德': 'd', // 德国杯
+    '意': 'y', // 意大利杯
+    '法': 'f', // 法国杯
+    '沙': 's', // 沙特国王杯
+    
+    // 联赛首字 (按区域)
+    // 欧洲
+    '比': 'b', // 比甲, 比乙
+    '土': 't', // 土超, 土甲
+    '希': 'x', // 希腊超, 希腊甲
+    '瑞': 'r', // 瑞士超, 瑞典超, 瑞典甲
+    '挪': 'n', // 挪超, 挪甲
+    '荷': 'h', // 荷甲, 荷乙, 荷丙
+    '葡': 'p', // 葡超, 葡甲, 葡乙
+    '俄': 'e', // 俄超, 俄甲, 俄乙
+    '西': 'x', // 西甲, 西乙, 西协甲
+    '德': 'd', // 德甲, 德乙, 德丙
+    '法': 'f', // 法甲, 法乙, 法丙
+    '意': 'y', // 意甲, 意乙, 意丙
+    '英': 'y', // 英超, 英冠, 英甲, 英乙
+    
+    // 亚洲
+    '中': 'z', // 中超, 中甲, 中乙
+    '日': 'r', // 日J联赛, 日J2联赛, 日J3联赛
+    '韩': 'h', // 韩K联赛, 韩K2联赛, 韩K3联赛
+    '泰': 't', // 泰超
+    '越': 'y', // 越南甲
+    '印': 'y', // 印度超
+    '澳': 'a', // 澳超, 澳联NPL
+    '卡': 'k', // 卡塔尔联赛
+    '阿': 'a', // 阿联酋联赛
+    
+    // 南美/北美
+    '巴': 'b', // 巴甲, 巴乙, 巴拉圭甲, 巴拿马甲
+    '阿': 'a', // 阿甲, 阿乙
+    '哥': 'g', // 哥伦甲, 哥斯达黎加甲
+    '智': 'z', // 智利甲
+    '乌': 'w', // 乌拉圭甲
+    '墨': 'm', // 墨超, 墨冠, 墨丙
+    '牙': 'y', // 牙买加甲
+    '特': 't', // 特立尼达和多巴哥甲
+    
+    // 球队首字 (从您所有名单中提取的首字)
+  "a": ["阿", "澳", "奥", "埃", "艾", "安", "昂"],
+  "b": ["巴", "比", "波", "布", "贝", "拜", "班", "彼", "伯", "毕", "百", "保", "白", "本", "邦", "宾", "博", "勃"],
+  "c": ["赤", "川", "查", "橙", "朝", "楚", "春", "城", "采", "茶", "长", "沧", "柴", "楚"],
+  "d": ["德", "丹", "多", "顿", "杜", "迪", "蒂", "都", "达", "代", "登", "东", "点", "大", "道"],
+  "e": ["厄", "恩", "俄", "娥", "峨", "饿", "谔", "尔"],
+  "f": ["法", "芬", "弗", "福", "菲", "费", "佛", "富", "凡", "范", "弗", "枫"],
+  "g": ["哥", "冈", "格", "广", "国", "戈", "瓜", "根", "甘", "高", "古", "关", "光", "格", "桂", "归"],
+  "h": ["荷", "韩", "皇", "河", "海", "横", "赫", "汉", "霍", "哈", "惠", "华", "合", "和", "恒", "洪", "杭", "衡"],
+  "j": ["加", "几", "津", "基", "吉", "捷", "京", "江", "建", "金", "锦", "济", "冀", "晋"],
+  "k": ["克", "喀", "卡", "科", "凯", "开", "康", "可", "空", "坎", "库", "奎"],
+  "l": ["罗", "利", "勒", "莱", "拉", "鹿", "联", "蓝", "老", "里", "雷", "桑", "乐", "冷", "朗", "劳", "洛", "鲁", "绿", "狼", "辽"],
+  "m": ["美", "墨", "摩", "马", "曼", "米", "麦", "蒙", "麻", "玛", "迈", "密", "明", "门", "名", "摩"],
+  "n": ["尼", "纽", "纳", "内", "南", "宁", "诺", "能", "奈", "尼", "纽"],
+  "p": ["葡", "帕", "博", "浦", "佩", "珀", "普", "匹", "平", "彭", "坡", "旁", "蓬", "磐"],
+  "q": ["切", "全", "奇", "青", "秋", "泉", "秦", "庆", "千", "琼", "黔"],
+  "r": ["日", "瑞", "仁", "热", "人", "任", "容", "柔", "日", "瑞"],
+  "s": ["塞", "沙", "萨", "圣", "首", "森", "斯", "社", "悉", "桑", "苏", "松", "申", "深", "顺", "水", "沈", "蜀"],
+  "t": ["突", "塔", "泰", "图", "坦", "特", "天", "通", "提", "托", "土", "唐", "太"],
+  "w": ["乌", "威", "维", "沃", "蔚", "瓦", "温", "万", "王", "文", "武", "武", "温", "皖"],
+  "x": ["西", "匈", "谢", "希", "厦", "湘", "新", "星", "兴", "忻", "徐"],
+  "y": ["英", "意", "尤", "亚", "伊", "雅", "越", "印", "牙", "扬", "洋", "延", "燕", "伊", "渝", "豫"],
+  "z": ["中", "赞", "泽", "智", "浙", "郑", "张", "章", "赵", "周", "淄", "圳", "浙", "粤"]
+};
+
+// --- 3. 确保后续的转换逻辑和 getInitial 函数保持不变 ---
+
+// 3.1 构造汉字到首字母的映射表 (这步是关键的反向查找表)
+const INITIAL_CHAR_MAP = PINYIN_MAP_INITIAL; // 既然 PINYIN_MAP_INITIAL 已经非常精简，我们可以直接使用它。
+
+/**
+ * 只获取第一个有效汉字的拼音首字母。
+ * @param {string} text 
+ * @returns {string} 首字母（小写），如果找不到则为空字符串。
+ 
+const getInitial = (text) => {
+    if (!text) return '';
+    const cleanedText = text.trim(); 
+    
+    for (let i = 0; i < cleanedText.length; i++) {
+        const char = cleanedText[i];
+        const lowerChar = char.toLowerCase();
+        
+        // 优先查找我们精确构造的首字映射表
+        if (INITIAL_CHAR_MAP[char]) {
+            return INITIAL_CHAR_MAP[char]; // 返回找到的首字母
+        }
+        
+        // 如果是英文或数字，也返回作为首字母（例如：A队 -> a）
+        if (lowerChar >= 'a' && lowerChar <= 'z') {
+            return lowerChar;
+        }
+        // 忽略非汉字和非字母的字符，继续查找下一个
+    }
+    
+    return '';
+};
+*/
+/*
+    // 工具：获取拼音首字母 (保持兼容性修复)
+    const getInitial = (text) => {
+        if (!text) return '';
+        let initials = '';
+        const cleanedText = text.trim(); 
+        
+        for (let i = 0; i < cleanedText.length; i++) {
+            const char = cleanedText[i];
+            let found = false;
+            
+            for (const initial in PINYIN_MAP) {
+                if (PINYIN_MAP[initial].includes(char)) {
+                    initials += initial;
+                    found = true;
+                    break;
+                }
+            }
+            
+            if (!found) {
+                const lowerChar = char.toLowerCase();
+                if ((lowerChar >= 'a' && lowerChar <= 'z') || (lowerChar >= '0' && lowerChar <= '9')) {
+                    initials += lowerChar;
+                }
+            }
+        }
+        return initials;
+    };
+*/
+/*
+// 工具：获取拼音首字母 (使用 Pinyin 库实现)
+const getInitial = (text) => {
+    if (!text) return '';
+    // pinyin-pro 库加载成功后，即可调用全局的 pinyin 函数
+    const initials = pinyin(text, { pattern: 'initial', toneType: 'none', nonZh: 'initial' });
+    return initials.toLowerCase().replace(/\s/g, '');
+};
+*/
+    // --- 3. Firebase 配置 ---
+    const cloudConfig = {
+        apiKey: "AIzaSyD2gY00krxzujQ6ol4lbShxOflMw48vDdc",
+        authDomain: "zuqiushuju.firebaseapp.com",
+        databaseURL: "https://zuqiushuju-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "zuqiushuju",
+        storageBucket: "zuqiushuju.firebasestorage.app",
+        messagingSenderId: "1033657621876",
+        appId: "1:1033657621876:web:6eed7f50786f1cd703a021",
+        measurementId: "G-JWF2CEWXL1"
+    };
+    let dbRef = null;
+    try {
+        if (typeof firebase !== 'undefined' && !firebase.apps.length) {
+            firebase.initializeApp(cloudConfig);
+            dbRef = firebase.database().ref('matchDataFinal');
+        }
+    } catch (err) { console.error("Firebase Error:", err); }
+
+    // --- 4. Vue 应用 ---
+    createApp({
+        setup() {
+            const currentPage = ref(1);
+            const localData = ref([]);
+            const searchQuery = ref("");
+            const showLeagueResults = ref(false);
+            const showHomeTeamResults = ref(false);
+            const showAwayTeamResults = ref(false);
+            const currentTeams = ref([]);
+            let leagueWatchTimeout = null;
+
+            const form = reactive({
+                date: new Date().toISOString().split('T')[0],
+                league: "", homeTeam: "", awayTeam: "",
+                halfScore: "", fullScore: "",
+                handicap: "-1", upperOdds: "", oddsChange: ""
+            });
+
+            // 修复：手动更新模型以解决 IME 延迟问题
+            const updateModel = (field, event) => {
+                form[field] = event.target.value;
+                
+                // 确保结果列表显示
+                if (field === 'league') showLeagueResults.value = true;
+                if (field === 'homeTeam') showHomeTeamResults.value = true;
+                if (field === 'awayTeam') showAwayTeamResults.value = true;
+            };
+
+            // 搜索逻辑
+            const filterCommon = (list, queryStr) => {
+                const query = queryStr.trim().toLowerCase();
+                if (!query) return list;
+                return list.filter(item => {
+                    return item.toLowerCase().includes(query) || getInitial(item).includes(query);
+                }).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+            };
+
+            const filteredLeagues = computed(() => filterCommon(Object.keys(leagueData), form.league));
+            const filteredHomeTeams = computed(() => filterCommon(currentTeams.value, form.homeTeam));
+            const filteredAwayTeams = computed(() => filterCommon(currentTeams.value, form.awayTeam));
+
+            const isKnownLeague = computed(() => {
+                return Object.keys(leagueData).some(k => k === form.league || k.toLowerCase() === form.league.toLowerCase());
+            });
+
+            watch(() => form.league, (newVal) => {
+                clearTimeout(leagueWatchTimeout);
+            });
+
+            // UI交互 (保持 500ms 延迟和同步更新)
+            const selectItem = (type, value) => {
+                
+                if (type === 'league') {
+                    form.league = value;
+                    form.homeTeam = ""; form.awayTeam = "";
+                    showLeagueResults.value = false;
+                    
+                    const matchedKey = Object.keys(leagueData).find(k => k === value || k.toLowerCase() === value.toLowerCase());
+                    if (matchedKey) currentTeams.value = leagueData[matchedKey];
+                    else currentTeams.value = [];
+
+                } else if (type === 'home') {
+                    form.homeTeam = value;
+                    showHomeTeamResults.value = false;
+                } else if (type === 'away') {
+                    form.awayTeam = value;
+                    showAwayTeamResults.value = false;
+                }
+            };
+
+            const hideResultsSafely = (type) => {
+                // 修复：保持 500ms 延迟，解决移动端点击选择列表时失焦的问题
+                setTimeout(() => {
+                    if (type === 'league') showLeagueResults.value = false;
+                    
+                    if (type === 'home') {
+                        showHomeTeamResults.value = false;
+                        if (form.homeTeam.trim() !== "" && currentTeams.value.length > 0 && !currentTeams.value.includes(form.homeTeam)) {
+                         //   form.homeTeam = ""; //
+                        }
+                    }
+                    if (type === 'away') {
+                        showAwayTeamResults.value = false;
+                        if (form.awayTeam.trim() !== "" && currentTeams.value.length > 0 && !currentTeams.value.includes(form.awayTeam)) {
+                         //   form.awayTeam = "";//
+                        }
+                    }
+                }, 500); // ★★★ 500ms 延迟，确保移动端选择成功 ★★★
+            };
+
+            // 输入处理：比分 00 -> 0-0
+            const formatScore = (field) => {
+                let val = form[field].trim();
+                if (/^\d{2}$/.test(val)) {
+                    form[field] = `${val[0]}-${val[1]}`;
+                } else if (val.includes(':') || val.includes('：')) {
+                    form[field] = val.replace(/[:：]/g, '-');
+                }
+            };
+
+            // 输入处理：赔率 111 -> 1.11
+const formatOdds = (field) => {
+    // 1. 获取并清理值
+    let val = form[field].trim().replace(/[^\d]/g, ''); // 只保留数字，去除所有非数字字符
+
+    // 2. 限制总长度为 3 位
+    if (val.length > 3) {
+        val = val.slice(0, 3);
+    }
+
+    // 3. 应用格式化规则
+    if (val.length === 1) {
+        // 1 位数：保持原样 (e.g., "1")
+        // 不需要任何操作
+        form[field] = val; 
+    } 
+    else if (val.length >= 2) { 
+        // 2 位数或 3 位数：自动插入小数点 (e.g., "11" -> "1.1", "111" -> "1.11")
+
+        // 格式化：取第一位作为整数，其余作为小数
+        // val[0] 是第一位
+        // val.slice(1) 是从第二位开始的剩余部分
+        form[field] = `${val[0]}.${val.slice(1)}`; 
+    } 
+    else {
+        // 0 位数（空）：保持为空
+        form[field] = val;
+    }
+};
+
+// --- 修正后的通用数字输入处理函数 ---
+const handleNumberInput = (event, field, isDecimal = true) => {
+    let val = event.target.value;
+    
+    // 1. 清理：只保留数字和小数点
+    val = val.replace(/[^\d.]/g, ''); 
+    
+    // 2. 小数处理（防止多个小数点和限制两位小数）
+    if (isDecimal) {
+        const parts = val.split('.');
+        
+        // 确保只有一个小数点
+        if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('');
+        
+        // 限制最多两位小数
+        const finalParts = val.split('.');
+        if (finalParts.length === 2 && finalParts[1].length > 2) {
+             val = finalParts[0] + '.' + finalParts[1].slice(0, 2);
+        }
+    } else {
+        // 如果是整数，则去除所有小数点
+        val = val.replace(/\./g, '');
+    }
+    
+    form[field] = val;
+    event.target.value = val;
+};
+    
+// --- 上盘赔率的特殊处理函数 (包含长度限制和格式化) ---
+const handleUpperOddsInput = (event) => {
+    const field = 'upperOdds'; // 假设这是上盘赔率的字段名
+
+    // 1. 调用通用数字处理（只保留数字，不含小数点）
+    let val = event.target.value;
+    val = val.replace(/[^\d]/g, ''); 
+    
+    // 2. 强制限制为 3 位
+    if (val.length > 3) {
+        val = val.slice(0, 3);
+    }
+
+    // 3. 应用自动格式化（1位不动，2-3位加小数点）
+    if (val.length >= 2) { 
+        val = `${val[0]}.${val.slice(1)}`; 
+    }
+    
+    form[field] = val;
+    event.target.value = val;
+};
+
+// 【重要】HTML 绑定示例 (假设您在表单失焦时执行格式化)
+/*
+<input 
+    type="text" 
+    :value="form.odds" 
+    @input="handleNumberInput($event, 'odds')" 
+    @blur="formatOdds('odds')" 
+/>
+*/
+
+/*
+            // 输入处理：赔率 111 -> 1.11
+            const formatOdds = (field) => {
+                let val = form[field].trim();
+                if (/^\d{2}$/.test(val)) {
+                    form[field] = `${val[0]}.${val.slice(1, 3)}`;
+                }
+            };
+
+            // 输入处理：数字限制
+            const handleNumberInput = (event, field, isDecimal) => {
+                let val = event.target.value;
+                val = val.replace(/[^\d.]/g, ''); 
+                if (isDecimal) {
+                    const parts = val.split('.');
+                    if (parts.length > 1) val = parts[0] + '.' + parts.slice(1).join('');
+                    if (parts.length === 2 && parts[1].length > 2) val = parts[0] + '.' + parts[1].slice(0, 2);
+                } else {
+                    val = val.replace(/\./g, '');
+                }
+                form[field] = val;
+                event.target.value = val;
+            };
+*/
+            // 数据操作
+            const getUniqueKey = (item) => `${item.league}_${item.homeTeam}_${item.awayTeam}_${item.date}`;
+            const isDuplicate = (newItem) => localData.value.some(item => getUniqueKey(item) === getUniqueKey(newItem));
+
+            const addData = () => {
+                const required = [form.date, form.league, form.homeTeam, form.awayTeam, form.halfScore, form.fullScore, form.handicap, form.upperOdds, form.oddsChange];
+                if (required.some(f => !f || f.trim() === '')) return alert("请填写所有带 * 的必填项！");
+                if (form.homeTeam === form.awayTeam) return alert("主客队不能相同");
+                
+                const newItem = { ...form };
+                if (isDuplicate(newItem)) return alert("数据已存在！");
+
+                localData.value.unshift(newItem);
+                saveToLocal();
+                
+                const savedDate = form.date;
+                Object.keys(form).forEach(k => form[k] = "");
+                form.date = savedDate;
+                form.handicap = "-1";
+            };
+
+            const deleteItem = (item) => {
+                if(confirm("确定删除？")) {
+                    localData.value = localData.value.filter(i => getUniqueKey(i) !== getUniqueKey(item));
+                    saveToLocal();
+                }
+            };
+
+            const clearLocalData = () => {
+                if(confirm("清空本地？")) { localData.value = []; saveToLocal(); }
+            };
+
+            const saveToLocal = () => localStorage.setItem('football_data_pro', JSON.stringify(localData.value));
+            const loadFromLocal = () => {
+                const saved = localStorage.getItem('football_data_pro');
+                if (saved) localData.value = JSON.parse(saved);
+            };
+
+            const exportCSV = () => {
+                if (localData.value.length === 0) return alert("无数据");
+                let csv = "data:text/csv;charset=utf-8,\uFEFF日期,赛事,主队,客队,半场,全场,让球,赔率,变化\n";
+                const esc = (v) => `"${String(v).replace(/"/g, '""')}"`;
+                localData.value.forEach(row => {
+                    csv += [esc(row.date), esc(row.league), esc(row.homeTeam), esc(row.awayTeam), esc(` ${row.halfScore}`), esc(` ${row.fullScore}`), esc(row.handicap), esc(row.upperOdds), esc(row.oddsChange)].join(',') + "\n";
+                });
+                const link = document.createElement("a");
+                link.href = encodeURI(csv);
+                link.download = `Data_${new Date().getTime()}.csv`;
+                link.click();
+            };
+
+            // 云端逻辑 (简化)
+            const uploadToCloud = () => {
+                if(!dbRef || !navigator.onLine) return alert("无法连接云端");
+                dbRef.once('value', snap => {
+                    const cData = snap.val() || {};
+                    const keys = new Set(Object.values(cData).map(getUniqueKey));
+                    const batch = {};
+                    let count = 0;
+                    localData.value.forEach(item => {
+                        if(!keys.has(getUniqueKey(item))) {
+                            batch[dbRef.push().key] = item;
+                            count++;
+                        }
+                    });
+                    if(count > 0) dbRef.update(batch).then(() => alert(`上传 ${count} 条`));
+                    else alert("无新数据");
+                });
+            };
+
+            const downloadFromCloud = () => {
+                if(!dbRef || !navigator.onLine) return alert("无法连接云端");
+                if(!confirm("确定下载？")) return;
+                dbRef.once('value', snap => {
+                    const list = Object.values(snap.val() || {});
+                    const keys = new Set(localData.value.map(getUniqueKey));
+                    let count = 0;
+                    list.forEach(item => {
+                        if(!keys.has(getUniqueKey(item))) { localData.value.unshift(item); count++; }
+                    });
+                    saveToLocal();
+                    alert(`下载 ${count} 条`);
+                });
+            };
+
+            
+            onMounted(() => {
+                loadFromLocal();
+            });
+
+            const filteredData = computed(() => {
+    const q = searchQuery.value.trim();
+    if (!q) return localData.value;
+
+    // 1. 预处理搜索词
+    // 确保搜索词 q 包含的都是数字（包括小数点）
+    const cleanedQ = q.replace(/[^\d.]/g, ''); 
+
+    // 如果清理后 q 是空的，或者清理后的 q 不是一个有效数字，则不进行数字搜索
+    if (cleanedQ === '' || isNaN(parseFloat(cleanedQ))) {
+        return [];
+    }
+
+    // 2. 定义搜索策略
+    let matchLogic = (itemValue) => false;
+    
+    // 转换为字符串，以便进行基于长度和前缀的字符串匹配
+    const qStr = cleanedQ;
+    const qLength = qStr.length;
+
+    if (qLength <= 3) {
+        // --- 策略 A: 3位数以下（1位或2位）采用精准搜索 ---
+        matchLogic = (itemValue) => {
+            // 确保精确匹配，包括小数点
+            return String(itemValue) === qStr; 
+        };
+
+    } else { // qLength >= 3
+        // --- 策略 B: 3位数及以上采用前4位一致的模糊搜索 ---
+        const prefix = qStr.slice(0, 4); // 截取前4位作为匹配前缀
+
+        matchLogic = (itemValue) => {
+            const itemStr = String(itemValue);
+            // 匹配 itemValue 的字符串形式是否以前4位前缀开头
+            return itemStr.startsWith(prefix);
+        };
+    }
+
+    // 3. 执行过滤
+    return localData.value.filter(i => {
+        // 针对 i.upperOdds 和 i.oddsChange 两个字段应用匹配逻辑
+        
+        // 匹配 i.upperOdds
+        if (matchLogic(i.upperOdds)) {
+            return true;
+        }
+
+        // 匹配 i.oddsChange
+        if (matchLogic(i.oddsChange)) {
+            return true;
+        }
+
+        return false;
+    });
+});
+
+/*
+            const filteredData = computed(() => {
+                const q = searchQuery.value.trim();
+                if (!q) return localData.value;
+                return localData.value.filter(i => i.upperOdds === q || (q.length >=2 && i.oddsChange.includes(q)));
+            });
+*/
+            return {
+                currentPage, form, localData, searchQuery, filteredData,formatOdds,
+                // 搜索
+                showLeagueResults, showHomeTeamResults, showAwayTeamResults,
+                filteredLeagues, filteredHomeTeams, filteredAwayTeams, isKnownLeague,
+                selectItem, hideResultsSafely, updateModel, // 暴露 updateModel
+                // 操作
+                addData, deleteItem, clearLocalData, exportCSV, uploadToCloud, downloadFromCloud,
+                formatScore, handleNumberInput
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
